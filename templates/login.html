@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OTP Login</title>
+</head>
+<body>
+    <h1>Enter OTP for {{ phone }}</h1>
+    <form method="post" action="/verify">
+        <input type="hidden" name="phone" value="{{ phone }}">
+        <input type="text" name="code" placeholder="12345">
+        <button type="submit">Verify</button>
+    </form>
+</body>
+</html>

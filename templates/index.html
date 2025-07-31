@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Telegram Member Adder</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <h1> Telegram Member Adder Dashboard</h1>
+    <form method="post" action="/start">
+        <input type="text" name="phone" placeholder="Enter phone number">
+        <button type="submit">Add Session</button>
+    </form>
+    <hr>
+    <h2> Session Status</h2>
+    {% for phone, stat in sessions.items() %}
+        <div class="session">
+            <strong>{{ phone }}</strong>: {{ stat.status }}
+            {% if stat.status == 'OTP_SENT' %}
+                <form method="post" action="/verify">
+                    <input type="hidden" name="phone" value="{{ phone }}">
+                    <input type="text" name="code" placeholder="Enter OTP">
+                    <button type="submit">Verify</button>
+                </form>
+            {% endif %}
+        </div>
+    {% endfor %}
+</body>
+</html>
