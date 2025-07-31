@@ -1,6 +1,5 @@
-
 import os
-import shutil
+import glob
 import asyncio
 from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -11,22 +10,12 @@ from telethon.errors import SessionPasswordNeededError, FloodWaitError, UserPriv
 from telethon.tl.functions.channels import JoinChannelRequest, InviteToChannelRequest
 
 # --- Configuration ---
-# IMPORTANT: Set API_ID and API_HASH in your Render Environment Variables
 API_ID = os.environ.get("API_ID")
 API_HASH = os.environ.get("API_HASH")
 SESSION_DIR = "sessions"
 
-# --- Clear sessions on startup ---
-if os.path.exists(SESSION_DIR):
-    shutil.rmtree(SESSION_DIR)
-os.makedirs(SESSION_DIR)
-print("✅ All sessions cleared on startup.")
-
 if not API_ID or not API_HASH:
     raise ValueError("API_ID and API_HASH must be set in environment variables.")
-
-if not os.path.exists(SESSION_DIR):
-    os.makedirs(SESSION_DIR)
 
 # --- FastAPI Setup ---
 app = FastAPI()
@@ -34,10 +23,22 @@ templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # --- In-Memory Session & Task Storage ---
-# This dictionary will hold the state of all running sessions
 SESSIONS = {}
 
-# --- Helper Functions ---
+# --- Core Logic & Helpers ---
+
+def clear_session_files():
+    """Deletes all .session files to prevent db lock errors on startup."""
+    if not os.path.exists(SESSION_DIR):
+        os.makedirs(SESSION_DIR)
+    pattern = os.path.join(SESSION_DIR, "*.session*")
+    for session_file in glob.glob(pattern):
+        try:
+            os.remove(session_file)
+            print(f"Deleted stale session file: {session_file}")
+        except Exception as e:
+            print(f"Failed to delete {session_file}: {e}")
+
 def update_status(phone, message):
     """Updates the status message for a given session."""
     if phone in SESSIONS:
@@ -54,21 +55,16 @@ async def member_adder_worker(phone: str, source_group: str, target_group: str):
         await client.connect()
 
         if not await client.is_user_authorized():
-            update_status(phone, "Error: Session expired or invalid. Please re-add.")
+            update_status(phone, "Error: Session is invalid. Please re-add.")
             return
 
-        # 1. Join channels
         update_status(phone, "Joining groups...")
         await client(JoinChannelRequest(source_group))
         await client(JoinChannelRequest(target_group))
 
-        # 2. Scrape members from source
-        update_status(phone, "Fetching members from source...")
-        source_members = await client.get_participants(source_group)
-
-        # 3. Filter out existing members from target
-        update_status(phone, "Filtering existing members...")
-        target_members = await client.get_participants(target_group)
+        update_status(phone, "Fetching members...")
+        source_members = await client.get_participants(source_group, limit=None)
+        target_members = await client.get_participants(target_group, limit=None)
         target_member_ids = {user.id for user in target_members}
 
         valid_members_to_add = [
@@ -80,13 +76,12 @@ async def member_adder_worker(phone: str, source_group: str, target_group: str):
             update_status(phone, "Completed: No new members to add.")
             return
 
-        # 4. Start adding members
         total = len(valid_members_to_add)
         for i, user in enumerate(valid_members_to_add):
             update_status(phone, f"Adding: {i+1}/{total} ({user.username})")
             try:
                 await client(InviteToChannelRequest(target_group, [user]))
-                await asyncio.sleep(10) # Add a small delay to be safe
+                await asyncio.sleep(10)
             except FloodWaitError as e:
                 update_status(phone, f"Flood Wait: Paused for {e.seconds}s")
                 await asyncio.sleep(e.seconds)
@@ -94,74 +89,66 @@ async def member_adder_worker(phone: str, source_group: str, target_group: str):
                 update_status(phone, f"Skipped: {user.username} (Privacy)")
                 await asyncio.sleep(5)
             except Exception as e:
-                update_status(phone, f"Error adding {user.username}: {e}")
+                update_status(phone, f"Error on {user.username}: {e}")
                 await asyncio.sleep(10)
 
-        update_status(phone, f"Completed: Successfully processed {total} members.")
+        update_status(phone, f"Completed: Processed {total} members.")
 
     except Exception as e:
         update_status(phone, f"Critical Error: {e}")
     finally:
         if client.is_connected():
             await client.disconnect()
+            update_status(phone, "Disconnected.")
 
 # --- FastAPI Routes ---
+@app.on_event("startup")
+async def on_startup():
+    """Clear old session files when the application starts."""
+    clear_session_files()
+    print("✅ Application startup complete. All stale sessions cleared.")
+
 @app.get("/", response_class=HTMLResponse)
 async def get_dashboard(request: Request):
-    """Renders the main dashboard UI."""
     return templates.TemplateResponse("index.html", {"request": request, "sessions": SESSIONS})
 
 @app.post("/add_session")
 async def add_session(request: Request):
-    """Handles the form submission to add a new account."""
     form = await request.form()
-    phone = form.get("phone")
-    source = form.get("source")
-    target = form.get("target")
+    phone, source, target = form.get("phone"), form.get("source"), form.get("target")
 
     if not all([phone, source, target]):
-        raise HTTPException(400, "Phone, source, and target are required.")
+        raise HTTPException(400, "All fields are required.")
 
-    session_file = f"{SESSION_DIR}/{phone}.session"
-    client = TelegramClient(session_file, int(API_ID), API_HASH)
-    await client.connect()
-
-    SESSIONS[phone] = {
-        "phone": phone,
-        "source": source,
-        "target": target,
-        "status": "waiting_for_otp",
-        "client": client, # Store client temporarily
-        "task": None
-    }
-
-    if not await client.is_user_authorized():
-        update_status(phone, "Sending OTP...")
-        await client.send_code_request(phone)
-        return templates.TemplateResponse("otp.html", {"request": request, "phone": phone})
-    else:
-        # Already authorized, start worker immediately
-        task = asyncio.create_task(member_adder_worker(phone, source, target))
-        SESSIONS[phone]["task"] = task
-        SESSIONS[phone].pop("client") # Don't store client object long-term
-        return RedirectResponse(url="/", status_code=303)
-
+    SESSIONS[phone] = {"phone": phone, "source": source, "target": target, "status": "Initializing...", "task": None}
+    
+    client = TelegramClient(f"{SESSION_DIR}/{phone}.session", int(API_ID), API_HASH)
+    try:
+        await client.connect()
+        if await client.is_user_authorized():
+            update_status(phone, "Session already verified. Starting worker...")
+            task = asyncio.create_task(member_adder_worker(phone, source, target))
+            SESSIONS[phone]["task"] = task
+            return RedirectResponse(url="/", status_code=303)
+        else:
+            update_status(phone, "Sending OTP...")
+            await client.send_code_request(phone)
+            return templates.TemplateResponse("otp.html", {"request": request, "phone": phone})
+    finally:
+        if client.is_connected():
+            await client.disconnect()
 
 @app.post("/verify_otp")
 async def verify_otp(request: Request):
-    """Handles OTP and 2FA verification."""
     form = await request.form()
-    phone = form.get("phone")
-    code = form.get("code")
-    password = form.get("password")
+    phone, code, password = form.get("phone"), form.get("code"), form.get("password")
 
     if phone not in SESSIONS:
         raise HTTPException(404, "Session not found. Please start over.")
 
-    session_data = SESSIONS[phone]
-    client = session_data["client"]
-    
+    client = TelegramClient(f"{SESSION_DIR}/{phone}.session", int(API_ID), API_HASH)
     try:
+        await client.connect()
         if password:
             await client.sign_in(password=password)
         else:
@@ -173,31 +160,29 @@ async def verify_otp(request: Request):
         update_status(phone, f"Verification Error: {e}")
         SESSIONS.pop(phone, None)
         return RedirectResponse(url="/", status_code=303)
+    finally:
+        if client.is_connected():
+            await client.disconnect()
 
     # Login successful, start the background worker
+    session_data = SESSIONS[phone]
     task = asyncio.create_task(member_adder_worker(phone, session_data["source"], session_data["target"]))
     SESSIONS[phone]["task"] = task
-    SESSIONS[phone].pop("client") # Clean up temporary client object
-    
     return RedirectResponse(url="/", status_code=303)
 
 @app.post("/restart_session")
 async def restart_session(request: Request):
-    """Stops the existing task and restarts the worker for a session."""
     form = await request.form()
     phone = form.get("phone")
 
     if phone not in SESSIONS:
         raise HTTPException(404, "Session not found.")
 
-    # Cancel the old task if it exists and is running
     if SESSIONS[phone].get("task") and not SESSIONS[phone]["task"].done():
         SESSIONS[phone]["task"].cancel()
 
-    # Start a new worker task
     session_data = SESSIONS[phone]
     new_task = asyncio.create_task(member_adder_worker(phone, session_data["source"], session_data["target"]))
     SESSIONS[phone]["task"] = new_task
-    
     update_status(phone, "Restarted manually.")
     return RedirectResponse(url="/", status_code=303)
