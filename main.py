@@ -17,8 +17,8 @@ API_HASH = os.environ.get("API_HASH")
 session_storage = {}
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request, "sessions": session_storage.keys()})
+async def homepage(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
 
 @app.post("/add_session")
 async def add_session(request: Request, phone_number: str = Form(...)):
@@ -54,3 +54,7 @@ async def verify_otp(request: Request, phone_number: str = Form(...), otp: str =
             "phone_number": phone_number,
             "error": str(e)
         })
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=10000, reload=True, log_level="debug")
