@@ -1,15 +1,18 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
     <title>Enter OTP</title>
+    <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <h1>OTP Verification</h1>
-    <form action="/verify_otp" method="post">
-        <input type="hidden" name="phone" value="{{ phone }}">
-        <label>Enter OTP code:</label><br>
-        <input type="text" name="code" required>
-        <button type="submit">Verify</button>
-    </form>
+    <div class="container form-container">
+        <h2>OTP Verification for {{ phone }}</h2>
+        <form action="/verify_otp" method="post">
+            <input type="hidden" name="phone" value="{{ phone }}">
+            <input type="text" name="code" placeholder="Enter OTP Code" required>
+            <button type="submit">Verify OTP</button>
+        </form>
+    </div>
 </body>
 </html>

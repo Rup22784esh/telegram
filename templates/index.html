@@ -1,31 +1,61 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Telegram Member Adder Dashboard</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram Member Adder</title>
     <link rel="stylesheet" href="/static/style.css">
+    <script>
+        // Refresh the page every 30 seconds to get live status updates
+        setInterval(() => {
+            window.location.reload();
+        }, 30000);
+    </script>
 </head>
 <body>
     <h1>Telegram Member Adder Dashboard</h1>
-    <form action="/add_session" method="post">
-        <label>Enter phone number (with country code):</label><br>
-        <input type="text" name="phone" required>
-        <button type="submit">Add Session</button>
-    </form>
 
-    <hr>
-    <h2>Session Status</h2>
-    <table>
-        <thead>
-            <tr><th>Phone</th><th>Status</th></tr>
-        </thead>
-        <tbody>
-            {% for session in sessions %}
-                <tr>
-                    <td>{{ session.phone }}</td>
-                    <td>{{ session.status }}</td>
-                </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <div class="container">
+        <div class="form-container">
+            <h2>Add New Account</h2>
+            <form action="/add_session" method="post">
+                <input type="text" name="phone" placeholder="Phone with country code (e.g., +1234567890)" required>
+                <input type="text" name="source" placeholder="Source Group/Channel Link or @username" required>
+                <input type="text" name="target" placeholder="Target Group/Channel Link or @username" required>
+                <button type="submit">Add Account</button>
+            </form>
+        </div>
+
+        <div class="sessions-container">
+            <h2>Active Sessions</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Phone</th>
+                        <th>Source</th>
+                        <th>Target</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for phone, data in sessions.items() %}
+                    <tr>
+                        <td>{{ data.phone }}</td>
+                        <td>{{ data.source }}</td>
+                        <td>{{ data.target }}</td>
+                        <td>{{ data.status }}</td>
+                        <td>
+                            <form action="/restart_session" method="post" style="display:inline;">
+                                <input type="hidden" name="phone" value="{{ phone }}">
+                                <button type="submit">Restart</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
 </body>
 </html>
