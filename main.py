@@ -1,3 +1,4 @@
+
 import os
 import glob
 import json
@@ -31,7 +32,6 @@ RUNNING_TASKS = {}
 
 def save_state():
     with open(STATE_FILE, 'w') as f:
-        # Don't save client objects, just the data
         json.dump({p: {k: v for k, v in d.items() if k != 'client'} for p, d in SESSIONS.items()}, f, indent=4)
 
 def load_state():
@@ -64,7 +64,6 @@ async def member_adder_worker(phone: str):
             update_status(phone, "Error: Session invalid.")
             return
 
-        # Main logic here...
         update_status(phone, "Starting process...")
         await client(JoinChannelRequest(source_group))
         await client(JoinChannelRequest(target_group))
@@ -78,14 +77,14 @@ async def member_adder_worker(phone: str):
             try:
                 update_status(phone, f"Adding {i+1}/{len(valid_members)}: {user.username}")
                 await client(InviteToChannelRequest(target_group, [user]))
-                await asyncio.sleep(15) # Slow down to avoid immediate flood waits
+                await asyncio.sleep(15)
             except FloodWaitError as e:
-                wait_time = e.seconds + 60 # Add a buffer
+                wait_time = e.seconds + 60
                 flood_until = time.time() + wait_time
                 update_status(phone, f"Flood Wait", flood_wait_until=flood_until)
-                return # Stop the task, cron will resume it
+                return
             except (UserPrivacyRestrictedError, UserNotMutualContactError):
-                continue # Skip user
+                continue
             except Exception as e:
                 update_status(phone, f"Error: {e}")
                 await asyncio.sleep(30)
@@ -97,14 +96,13 @@ async def member_adder_worker(phone: str):
     finally:
         if client.is_connected():
             await client.disconnect()
-        RUNNING_TASKS.pop(phone, None) # Mark task as finished
+        RUNNING_TASKS.pop(phone, None)
 
 # --- FastAPI Routes ---
 @app.on_event("startup")
 async def on_startup():
     load_state()
     print("✅ Application started. Loaded previous state.")
-    # Automatically try to wake up sessions on startup
     await wake_up_sessions()
 
 @app.get("/", response_class=HTMLResponse)
@@ -127,11 +125,11 @@ async def add_session(request: Request):
         update_status(phone, "Ready to start.")
         task = asyncio.create_task(member_adder_worker(phone))
         RUNNING_TASKS[phone] = task
+        return RedirectResponse(url="/", status_code=303)
     else:
         await client.send_code_request(phone)
-        # Client stays connected and stored for OTP
-
-    return RedirectResponse(url="/", status_code=303)
+        # This is the critical fix: return the OTP template here
+        return templates.TemplateResponse("otp.html", {"request": request, "phone": phone})
 
 @app.post("/verify_otp")
 async def verify_otp(request: Request):
@@ -157,11 +155,10 @@ async def verify_otp(request: Request):
 
 @app.get("/wake")
 async def wake_up_sessions():
-    """Endpoint for Render Cron Job. Checks and resumes tasks."""
     resumed_count = 0
     for phone, data in SESSIONS.items():
         if phone in RUNNING_TASKS and not RUNNING_TASKS[phone].done():
-            continue # Task is already running
+            continue
 
         should_run = False
         if 'flood_wait_until' in data and data['flood_wait_until']:
