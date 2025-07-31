@@ -1,6 +1,7 @@
-
 import os
 import glob
+import json
+import time
 import asyncio
 from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -14,6 +15,7 @@ from telethon.tl.functions.channels import JoinChannelRequest, InviteToChannelRe
 API_ID = os.environ.get("API_ID")
 API_HASH = os.environ.get("API_HASH")
 SESSION_DIR = "sessions"
+STATE_FILE = "sessions_state.json"
 
 if not API_ID or not API_HASH:
     raise ValueError("API_ID and API_HASH must be set in environment variables.")
@@ -23,156 +25,154 @@ app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# --- In-Memory Session & Task Storage ---
+# --- State Management ---
 SESSIONS = {}
+RUNNING_TASKS = {}
 
-# --- Core Logic & Helpers ---
+def save_state():
+    with open(STATE_FILE, 'w') as f:
+        # Don't save client objects, just the data
+        json.dump({p: {k: v for k, v in d.items() if k != 'client'} for p, d in SESSIONS.items()}, f, indent=4)
 
-def clear_session_files():
-    if not os.path.exists(SESSION_DIR):
-        os.makedirs(SESSION_DIR)
-    pattern = os.path.join(SESSION_DIR, "*.session*")
-    for session_file in glob.glob(pattern):
-        try:
-            os.remove(session_file)
-            print(f"Deleted stale session file: {session_file}")
-        except Exception as e:
-            print(f"Failed to delete {session_file}: {e}")
+def load_state():
+    global SESSIONS
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE, 'r') as f:
+            SESSIONS = json.load(f)
 
-def update_status(phone, message):
+def update_status(phone, message, flood_wait_until=None):
     if phone in SESSIONS:
-        SESSIONS[phone]["status"] = message
+        SESSIONS[phone]['status'] = message
+        SESSIONS[phone]['flood_wait_until'] = flood_wait_until
+        save_state()
     print(f"[{phone}] {message}")
 
-async def member_adder_worker(phone: str, source_group: str, target_group: str):
-    session_file = f"{SESSION_DIR}/{phone}.session"
-    client = TelegramClient(session_file, int(API_ID), API_HASH)
+# --- Core Worker Logic ---
+async def member_adder_worker(phone: str):
+    session_data = SESSIONS.get(phone, {})
+    source_group = session_data.get('source')
+    target_group = session_data.get('target')
+
+    if not all([source_group, target_group]):
+        update_status(phone, "Error: Source/Target not configured.")
+        return
+
+    client = TelegramClient(f"{SESSION_DIR}/{phone}.session", int(API_ID), API_HASH)
     try:
-        update_status(phone, "Connecting...")
         await client.connect()
         if not await client.is_user_authorized():
-            update_status(phone, "Error: Session invalid. Please re-add.")
+            update_status(phone, "Error: Session invalid.")
             return
 
-        update_status(phone, "Joining groups...")
+        # Main logic here...
+        update_status(phone, "Starting process...")
         await client(JoinChannelRequest(source_group))
         await client(JoinChannelRequest(target_group))
 
-        update_status(phone, "Fetching members...")
         source_members = await client.get_participants(source_group, limit=None)
         target_members = await client.get_participants(target_group, limit=None)
-        target_member_ids = {user.id for user in target_members}
+        target_ids = {u.id for u in target_members}
+        valid_members = [u for u in source_members if u.id not in target_ids and not u.bot and u.username]
 
-        valid_members_to_add = [u for u in source_members if u.id not in target_member_ids and not u.bot and u.username]
-
-        if not valid_members_to_add:
-            update_status(phone, "Completed: No new members to add.")
-            return
-
-        total = len(valid_members_to_add)
-        for i, user in enumerate(valid_members_to_add):
-            update_status(phone, f"Adding: {i+1}/{total} ({user.username})")
+        for i, user in enumerate(valid_members):
             try:
+                update_status(phone, f"Adding {i+1}/{len(valid_members)}: {user.username}")
                 await client(InviteToChannelRequest(target_group, [user]))
-                await asyncio.sleep(10)
+                await asyncio.sleep(15) # Slow down to avoid immediate flood waits
             except FloodWaitError as e:
-                update_status(phone, f"Flood Wait: Paused for {e.seconds}s")
-                await asyncio.sleep(e.seconds)
+                wait_time = e.seconds + 60 # Add a buffer
+                flood_until = time.time() + wait_time
+                update_status(phone, f"Flood Wait", flood_wait_until=flood_until)
+                return # Stop the task, cron will resume it
             except (UserPrivacyRestrictedError, UserNotMutualContactError):
-                update_status(phone, f"Skipped: {user.username} (Privacy)")
-                await asyncio.sleep(5)
+                continue # Skip user
             except Exception as e:
-                update_status(phone, f"Error on {user.username}: {e}")
-                await asyncio.sleep(10)
+                update_status(phone, f"Error: {e}")
+                await asyncio.sleep(30)
 
-        update_status(phone, f"Completed: Processed {total} members.")
+        update_status(phone, "Completed: All members processed.")
+
     except Exception as e:
         update_status(phone, f"Critical Error: {e}")
     finally:
         if client.is_connected():
             await client.disconnect()
-            update_status(phone, "Worker disconnected.")
+        RUNNING_TASKS.pop(phone, None) # Mark task as finished
 
 # --- FastAPI Routes ---
 @app.on_event("startup")
 async def on_startup():
-    clear_session_files()
-    print("✅ Application startup complete. All stale sessions cleared.")
+    load_state()
+    print("✅ Application started. Loaded previous state.")
+    # Automatically try to wake up sessions on startup
+    await wake_up_sessions()
 
 @app.get("/", response_class=HTMLResponse)
 async def get_dashboard(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request, "sessions": SESSIONS})
+    return templates.TemplateResponse("index.html", {"request": request, "sessions": SESSIONS, "time": time})
 
 @app.post("/add_session")
 async def add_session(request: Request):
     form = await request.form()
     phone, source, target = form.get("phone"), form.get("source"), form.get("target")
 
-    if not all([phone, source, target]):
-        raise HTTPException(400, "All fields are required.")
-
     client = TelegramClient(f"{SESSION_DIR}/{phone}.session", int(API_ID), API_HASH)
     await client.connect()
 
-    SESSIONS[phone] = {"phone": phone, "source": source, "target": target, "status": "Initializing...", "client": client, "task": None}
-
+    SESSIONS[phone] = {"phone": phone, "source": source, "target": target, "status": "Authenticating", "client": client}
+    
     if await client.is_user_authorized():
-        update_status(phone, "Session already verified. Starting worker...")
-        task = asyncio.create_task(member_adder_worker(phone, source, target))
-        SESSIONS[phone]["task"] = task
-        SESSIONS[phone].pop("client", None)
         await client.disconnect()
-        return RedirectResponse(url="/", status_code=303)
+        SESSIONS[phone].pop("client", None)
+        update_status(phone, "Ready to start.")
+        task = asyncio.create_task(member_adder_worker(phone))
+        RUNNING_TASKS[phone] = task
     else:
-        update_status(phone, "Sending OTP...")
         await client.send_code_request(phone)
-        # Keep client connected and stored in SESSIONS for OTP verification
-        return templates.TemplateResponse("otp.html", {"request": request, "phone": phone})
+        # Client stays connected and stored for OTP
+
+    return RedirectResponse(url="/", status_code=303)
 
 @app.post("/verify_otp")
 async def verify_otp(request: Request):
     form = await request.form()
     phone, code, password = form.get("phone"), form.get("code"), form.get("password")
+    client = SESSIONS[phone].get("client")
 
-    if phone not in SESSIONS or "client" not in SESSIONS[phone]:
-        raise HTTPException(404, "Session not found or expired. Please start over.")
-
-    client = SESSIONS[phone]["client"]
     try:
         if password:
             await client.sign_in(password=password)
         else:
-            await client.sign_in(phone, code=code)
+            await client.sign_in(phone, code)
     except SessionPasswordNeededError:
-        update_status(phone, "2FA Password Needed")
         return templates.TemplateResponse("password.html", {"request": request, "phone": phone})
-    except Exception as e:
-        update_status(phone, f"Verification Error: {e}")
-        SESSIONS.pop(phone, None)
-        return RedirectResponse(url="/", status_code=303)
     finally:
-        if client.is_connected():
-            await client.disconnect()
+        await client.disconnect()
+        SESSIONS[phone].pop("client", None)
 
-    session_data = SESSIONS[phone]
-    task = asyncio.create_task(member_adder_worker(phone, session_data["source"], session_data["target"]))
-    SESSIONS[phone]["task"] = task
-    SESSIONS[phone].pop("client", None)
+    update_status(phone, "Ready to start.")
+    task = asyncio.create_task(member_adder_worker(phone))
+    RUNNING_TASKS[phone] = task
     return RedirectResponse(url="/", status_code=303)
 
-@app.post("/restart_session")
-async def restart_session(request: Request):
-    form = await request.form()
-    phone = form.get("phone")
+@app.get("/wake")
+async def wake_up_sessions():
+    """Endpoint for Render Cron Job. Checks and resumes tasks."""
+    resumed_count = 0
+    for phone, data in SESSIONS.items():
+        if phone in RUNNING_TASKS and not RUNNING_TASKS[phone].done():
+            continue # Task is already running
 
-    if phone not in SESSIONS:
-        raise HTTPException(404, "Session not found.")
+        should_run = False
+        if 'flood_wait_until' in data and data['flood_wait_until']:
+            if time.time() > data['flood_wait_until']:
+                should_run = True
+        elif data.get('status') == 'Ready to start':
+            should_run = True
 
-    if SESSIONS[phone].get("task") and not SESSIONS[phone]["task"].done():
-        SESSIONS[phone]["task"].cancel()
-
-    session_data = SESSIONS[phone]
-    new_task = asyncio.create_task(member_adder_worker(phone, session_data["source"], session_data["target"]))
-    SESSIONS[phone]["task"] = new_task
-    update_status(phone, "Restarted manually.")
-    return RedirectResponse(url="/", status_code=303)
+        if should_run:
+            task = asyncio.create_task(member_adder_worker(phone))
+            RUNNING_TASKS[phone] = task
+            resumed_count += 1
+            
+    return {"status": "Woken up", "resumed_sessions": resumed_count}
