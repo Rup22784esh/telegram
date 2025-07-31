@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Enter OTP</title>
+</head>
+<body>
+    <h1>OTP Verification</h1>
+    <form action="/verify_otp" method="post">
+        <input type="hidden" name="phone" value="{{ phone }}">
+        <label>Enter OTP code:</label><br>
+        <input type="text" name="code" required>
+        <button type="submit">Verify</button>
+    </form>
+</body>
+</html>

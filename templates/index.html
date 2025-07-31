@@ -1,14 +1,31 @@
-<!-- templates/index.html -->
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Telegram Member Adder Dashboard</title>
+    <title>Telegram Member Adder Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <h1>It works!</h1>
-  <form action="/add_session" method="post">
-    <input type="text" name="phone_number" placeholder="Enter Phone Number" required>
-    <button type="submit">Add Account</button>
-  </form>
+    <h1>Telegram Member Adder Dashboard</h1>
+    <form action="/add_session" method="post">
+        <label>Enter phone number (with country code):</label><br>
+        <input type="text" name="phone" required>
+        <button type="submit">Add Session</button>
+    </form>
+
+    <hr>
+    <h2>Session Status</h2>
+    <table>
+        <thead>
+            <tr><th>Phone</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+            {% for session in sessions %}
+                <tr>
+                    <td>{{ session.phone }}</td>
+                    <td>{{ session.status }}</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
 </body>
 </html>
