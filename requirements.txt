@@ -2,3 +2,4 @@ fastapi
 uvicorn
 telethon
 jinja2
+python-multipart
