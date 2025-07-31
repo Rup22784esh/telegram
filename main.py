@@ -3,11 +3,13 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import os, asyncio
+from pathlib import Path
 from telethon_worker import start_session, SESSION_STATUS
 
 app = FastAPI()
-app.mount("/static", StaticFiles(directory="/data/data/com.termux/files/home/telegram/one/project/static"), name="static")
-templates = Jinja2Templates(directory="/data/data/com.termux/files/home/telegram/one/project/templates")
+BASE_DIR = Path(__file__).resolve().parent
+app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
