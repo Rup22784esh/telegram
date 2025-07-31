@@ -1,5 +1,6 @@
 
 import os
+import shutil
 import asyncio
 from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -14,6 +15,12 @@ from telethon.tl.functions.channels import JoinChannelRequest, InviteToChannelRe
 API_ID = os.environ.get("API_ID")
 API_HASH = os.environ.get("API_HASH")
 SESSION_DIR = "sessions"
+
+# --- Clear sessions on startup ---
+if os.path.exists(SESSION_DIR):
+    shutil.rmtree(SESSION_DIR)
+os.makedirs(SESSION_DIR)
+print("✅ All sessions cleared on startup.")
 
 if not API_ID or not API_HASH:
     raise ValueError("API_ID and API_HASH must be set in environment variables.")
