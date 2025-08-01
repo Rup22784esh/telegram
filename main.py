@@ -155,11 +155,15 @@ async def add_session_route(request: Request, phone: str = Form(...), source: st
             "status": "Awaiting OTP", "added": 0, "skipped": 0
         }
         log(phone, "New session. Sent OTP code.")
-        return templates.TemplateResponse("otp.html", {"request": request, "phone": phone})
+        return RedirectResponse(url=f"/otp_page?phone={phone}", status_code=303)
     except Exception as e:
         log(phone, f"Failed to send OTP: {e}")
         await client.disconnect()
         return HTMLResponse(f"Error initializing session: {e}", status_code=500)
+
+@app.get("/otp_page", response_class=HTMLResponse)
+async def get_otp_page(request: Request, phone: str):
+    return templates.TemplateResponse("otp.html", {"request": request, "phone": phone})
 
 @app.post("/verify_otp")
 async def verify_otp_route(request: Request, phone: str = Form(...), code: str = Form(...), password: str = Form(None)):

@@ -132,7 +132,9 @@
             e.preventDefault();
             const formData = new FormData(e.target);
             const response = await fetch('/add_session', { method: 'POST', body: formData });
-            if (response.ok) {
+            if (response.redirected) {
+                window.location.href = response.url; // Redirect the browser
+            } else if (response.ok) {
                 e.target.reset();
                 fetchAndUpdate();
             } else {
