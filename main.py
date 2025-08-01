@@ -76,23 +76,34 @@ async def homepage(request: Request):
 @app.post("/add_session")
 async def add_session_route(request: Request, phone: str = Form(...), source: str = Form(...), target: str = Form(...)):
     phone = phone.strip()
-    client = TelegramClient(f"{SESSION_DIR}/{phone}", int(API_ID), API_HASH)
-    await client.connect()
-
-    if await client.is_user_authorized():
+    
+    # Check if session file exists, which implies it's authorized
+    if os.path.exists(f"{SESSION_DIR}/{phone}.session"):
         SESSIONS[phone] = {
             "phone": phone, "source": source, "target": target,
             "status": "Ready", "added": 0, "skipped": 0
         }
+        log(phone, "Authorized session found. Starting worker.")
         asyncio.create_task(add_members_task(phone, source, target))
         return RedirectResponse(url="/", status_code=303)
-    else:
+
+    # If no session file, begin authorization flow
+    client = TelegramClient(f"{SESSION_DIR}/{phone}", int(API_ID), API_HASH)
+    await client.connect()
+
+    try:
         phone_code_hash = await client.send_code_request(phone)
         SESSIONS[phone] = {
             "phone": phone, "source": source, "target": target,
-            "client": client, "phone_code_hash": phone_code_hash.phone_code_hash
+            "client": client, "phone_code_hash": phone_code_hash.phone_code_hash,
+            "status": "Awaiting OTP", "added": 0, "skipped": 0
         }
+        log(phone, "New session. Sent OTP code.")
         return templates.TemplateResponse("otp.html", {"request": request, "phone": phone})
+    except Exception as e:
+        log(phone, f"Failed to send OTP: {e}")
+        await client.disconnect()
+        return HTMLResponse(f"Error initializing session: {e}", status_code=500)
 
 @app.post("/verify_otp")
 async def verify_otp_route(request: Request, phone: str = Form(...), code: str = Form(...), password: str = Form(None)):
