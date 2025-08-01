@@ -58,9 +58,8 @@ def update_status(phone, message, flood_wait_until=None, added=None, skipped=Non
         if skipped is not None:
             data['skipped'] = skipped
 
-async def add_members_task(phone, source, target):
+async def add_members_task(client, phone, source, target):
     log(phone, f"Starting session: {source} -> {target}")
-    client = TelegramClient(f"{SESSION_DIR}/{phone}", int(API_ID), API_HASH)
     
     try:
         await client.connect()
@@ -135,12 +134,14 @@ async def add_session_route(request: Request, phone: str = Form(...), source: st
     
     # Check if session file exists, which implies it's authorized
     if os.path.exists(f"{SESSION_DIR}/{phone}.session"):
+        client = TelegramClient(f"{SESSION_DIR}/{phone}", int(API_ID), API_HASH)
+        await client.connect()
         SESSIONS[phone] = {
             "phone": phone, "source": source, "target": target,
-            "status": "Ready", "added": 0, "skipped": 0
+            "client": client, "status": "Ready", "added": 0, "skipped": 0
         }
         log(phone, "Authorized session found. Starting worker.")
-        asyncio.create_task(add_members_task(phone, source, target))
+        asyncio.create_task(add_members_task(client, phone, source, target))
         return RedirectResponse(url="/", status_code=303)
 
     # If no session file, begin authorization flow
@@ -184,7 +185,7 @@ async def verify_otp_route(request: Request, phone: str = Form(...), code: str =
 
         # Do not disconnect here, the background task will handle it.
         session_data["status"] = "Ready"
-        asyncio.create_task(add_members_task(phone, source, target))
+        asyncio.create_task(add_members_task(client, phone, source, target))
         return RedirectResponse(url="/", status_code=303)
 
     except SessionPasswordNeededError:
@@ -210,8 +211,14 @@ async def restart_session_route(request: Request, phone: str = Form(...)):
         return JSONResponse({"error": "Session not found"}, status_code=404)
     
     s = SESSIONS[phone]
+    client = s.get('client')
+    if not client or not client.is_connected():
+        client = TelegramClient(f"{SESSION_DIR}/{phone}", int(API_ID), API_HASH)
+        await client.connect()
+        s['client'] = client
+
     log(phone, "Restarting session manually.")
-    asyncio.create_task(add_members_task(phone, s["source"], s["target"]))
+    asyncio.create_task(add_members_task(client, phone, s["source"], s["target"]))
     return JSONResponse({"success": True})
 
 @app.post("/reauthenticate_session")
@@ -220,9 +227,11 @@ async def reauthenticate_session_route(request: Request, phone: str = Form(...))
     if not session_data:
         return JSONResponse({"error": "Session not found"}, status_code=404)
 
-    # Re-initialize client for re-authentication
-    client = TelegramClient(f"{SESSION_DIR}/{phone}", int(API_ID), API_HASH)
-    await client.connect()
+    client = session_data.get('client')
+    if not client or not client.is_connected():
+        client = TelegramClient(f"{SESSION_DIR}/{phone}", int(API_ID), API_HASH)
+        await client.connect()
+        session_data['client'] = client
 
     try:
         sent_code = await client.send_code_request(phone)
