@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from telethon import TelegramClient
-from telethon.errors import SessionPasswordNeededError, FloodWaitError, UserPrivacyRestrictedError, UserNotMutualContactError, UserChannelsTooMuchError
+from telethon.errors import SessionPasswordNeededError, FloodWaitError, UserPrivacyRestrictedError, UserNotMutualContactError, UserChannelsTooMuchError, UsersTooMuchError, UserAlreadyParticipantError
 from telethon.tl.functions.channels import JoinChannelRequest, InviteToChannelRequest
 
 # --- Configuration ---
@@ -77,15 +77,18 @@ async def member_adder_worker(phone: str):
             try:
                 update_status(phone, f"Adding {i+1}/{len(valid_members)}: {user.username}")
                 await client(InviteToChannelRequest(target_group, [user]))
-                await asyncio.sleep(15)
+                await asyncio.sleep(1)
             except FloodWaitError as e:
                 wait_time = e.seconds + 60
                 flood_until = time.time() + wait_time
                 update_status(phone, f"Flood Wait", flood_wait_until=flood_until)
                 return
-            except (UserPrivacyRestrictedError, UserNotMutualContactError, UserChannelsTooMuchError):
+            except (UserPrivacyRestrictedError, UserNotMutualContactError, UserChannelsTooMuchError, UserAlreadyParticipantError):
                 await asyncio.sleep(5)
                 continue
+            except UsersTooMuchError:
+                update_status(phone, "Error: Target group is full.")
+                return
             except Exception as e:
                 update_status(phone, f"Error: {e}")
                 await asyncio.sleep(30)
