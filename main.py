@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from telethon import TelegramClient
-from telethon.errors import SessionPasswordNeededError, FloodWaitError, UserPrivacyRestrictedError, UserNotMutualContactError
+from telethon.errors import SessionPasswordNeededError, FloodWaitError, UserPrivacyRestrictedError, UserNotMutualContactError, UserChannelsTooMuchError
 from telethon.tl.functions.channels import JoinChannelRequest, InviteToChannelRequest
 
 # --- Configuration ---
@@ -83,7 +83,8 @@ async def member_adder_worker(phone: str):
                 flood_until = time.time() + wait_time
                 update_status(phone, f"Flood Wait", flood_wait_until=flood_until)
                 return
-            except (UserPrivacyRestrictedError, UserNotMutualContactError):
+            except (UserPrivacyRestrictedError, UserNotMutualContactError, UserChannelsTooMuchError):
+                await asyncio.sleep(5)
                 continue
             except Exception as e:
                 update_status(phone, f"Error: {e}")
