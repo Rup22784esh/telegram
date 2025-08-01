@@ -14,9 +14,9 @@ from telethon.errors import (
     UserAlreadyParticipantError,
     UsersTooMuchError,
     UserChannelsTooMuchError,
-    SessionPasswordNeededError,
-    TelethonError
+    SessionPasswordNeededError
 )
+from telethon.errors.rpcbaseerrors import RPCError
 from telethon.tl.functions.channels import InviteToChannelRequest, JoinChannelRequest
 
 # --- Configuration ---
@@ -107,33 +107,47 @@ async def add_members_task(phone, source, target, last_seen_filter):
                 log(phone, f"Successfully added {username}")
 
             except FloodWaitError as e:
-                wait_time = e.seconds + 15
-                flood_until = time.time() + wait_time
-                update_status(phone, f"FloodWait: waiting {wait_time}s", flood_wait_until=flood_until)
-                log(phone, f"FloodWaitError for {wait_time} seconds. Pausing session.")
+                wait_time = e.seconds + 10
+                update_status(phone, f"Flood wait for {wait_time}s", flood_wait_until=time.time()+wait_time)
+                log(phone, f"FloodWait for {wait_time} seconds")
                 await asyncio.sleep(wait_time)
-                log(phone, "Resuming after flood wait.")
-                continue
-
-            except (UserPrivacyRestrictedError, UserAlreadyParticipantError) as e:
+            except UserPrivacyRestrictedError:
                 skipped_count += 1
-                log(phone, f"{type(e).__name__} - skipping user {username}")
+                update_status(phone, "Skipped (privacy)", skipped=skipped_count)
+                log(phone, "Privacy skip")
+                await asyncio.sleep(2)
+            except UserAlreadyParticipantError:
+                skipped_count += 1
+                update_status(phone, "Skipped (already participant)", skipped=skipped_count)
+                log(phone, "Already participant skip")
                 await asyncio.sleep(1)
-                continue
-
             except (UsersTooMuchError, UserChannelsTooMuchError):
-                update_status(phone, "Error: Account group/channel limit reached.")
-                log(phone, "UsersTooMuchError or UserChannelsTooMuchError - stopping session.")
+                update_status(phone, "Account channels/groups limit reached. Stopping.")
+                log(phone, "Limit reached stop")
                 break
-
-            except TelethonError as e:
-                log(phone, f"Telethon error: {str(e)}")
-                await asyncio.sleep(10)
-            
+            except SessionPasswordNeededError:
+                update_status(phone, "2FA password needed. Manual login.", skipped=skipped_count)
+                log(phone, "Need 2FA password")
+                break
+            except RPCError as e:
+                msg = str(e).lower()
+                if "flood_wait" in msg:
+                    # handle as flood wait
+                    wait = int(e.code or 60)
+                    update_status(phone, f"Flood wait via RPC {wait}s", flood_wait_until=time.time()+wait)
+                    log(phone, f"RPC FloodWait {wait}s")
+                    await asyncio.sleep(wait + 5)
+                elif "too much" in msg or "limit" in msg:
+                    update_status(phone, "Target group limit reached via RPC")
+                    log(phone, f"RPC limit error: {msg}")
+                    break
+                else:
+                    log(phone, f"RPCError unknown: {msg}")
+                    await asyncio.sleep(10)
             except Exception as e:
-                skipped_count += 1
-                log(phone, f"Unexpected error for user {username}: {str(e)}")
-                await asyncio.sleep(5)
+                update_status(phone, f"Unexpected error: {e}")
+                log(phone, f"Unexpected: {e}")
+                await asyncio.sleep(15)
 
         update_status(phone, "Finished", added=added_count, skipped=skipped_count)
         log(phone, f"Session finished. Added: {added_count}, Skipped: {skipped_count}")
