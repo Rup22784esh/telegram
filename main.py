@@ -112,6 +112,7 @@ async def member_adder_worker(phone: str):
                 update_status(phone, f"[{i+1}/{len(valid_members)}] Adding: {username}")
                 await client(InviteToChannelRequest(target_group, [user]))
                 added_count += 1
+                SESSIONS[phone]['added'] = added_count
                 await asyncio.sleep(1)
             except FloodWaitError as e:
                 wait_time = e.seconds + 10
@@ -120,6 +121,7 @@ async def member_adder_worker(phone: str):
                 return # Exit and let the cron job restart it
             except UserAlreadyParticipantError:
                 skipped_count += 1
+                SESSIONS[phone]['skipped'] = skipped_count
                 update_status(phone, f"Skipped (already in group): {username}")
                 continue
             except (UserPrivacyRestrictedError, UserNotMutualContactError, UserChannelsTooMuchError) as known:
@@ -175,7 +177,9 @@ async def add_session(request: Request):
         "target": target, 
         "status": "Authenticating", 
         "client": client,
-        "last_seen_filter": last_seen_filter
+        "last_seen_filter": last_seen_filter,
+        "added": 0,
+        "skipped": 0
     }
     
     if await client.is_user_authorized():
@@ -209,6 +213,21 @@ async def verify_otp(request: Request):
     update_status(phone, "Ready to start.")
     task = asyncio.create_task(member_adder_worker(phone))
     RUNNING_TASKS[phone] = task
+    return RedirectResponse(url="/", status_code=303)
+
+@app.post("/restart_session")
+async def restart_session(request: Request):
+    form = await request.form()
+    phone = form.get('phone')
+    if phone in SESSIONS:
+        if phone in RUNNING_TASKS and not RUNNING_TASKS[phone].done():
+            RUNNING_TASKS[phone].cancel()
+        
+        SESSIONS[phone]['status'] = 'Restarting...'
+        SESSIONS[phone]['added'] = 0
+        SESSIONS[phone]['skipped'] = 0
+        task = asyncio.create_task(member_adder_worker(phone))
+        RUNNING_TASKS[phone] = task
     return RedirectResponse(url="/", status_code=303)
 
 async def periodic_wake_up():

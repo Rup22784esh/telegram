@@ -22,7 +22,7 @@
             <h2>Active Sessions</h2>
             <table>
                 <thead>
-                    <tr><th>Phone</th><th>Source</th><th>Target</th><th>Status</th></tr>
+                    <tr><th>Phone</th><th>Source</th><th>Target</th><th>Status</th><th>Added</th><th>Skipped</th><th>Actions</th></tr>
                 </thead>
                 <tbody>
                     {% for phone, data in sessions.items() %}
@@ -36,6 +36,14 @@
                             {% else %}
                                 {{ data.status }}
                             {% endif %}
+                        </td>
+                        <td>{{ data.added or 0 }}</td>
+                        <td>{{ data.skipped or 0 }}</td>
+                        <td>
+                            <form method="POST" action="/restart_session" style="display:inline;">
+                                <input type="hidden" name="phone" value="{{ data.phone }}">
+                                <button type="submit">Restart</button>
+                            </form>
                         </td>
                     </tr>
                     {% endfor %}
