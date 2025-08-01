@@ -14,9 +14,9 @@ from telethon.errors import (
     UserAlreadyParticipantError,
     UsersTooMuchError,
     UserChannelsTooMuchError,
-    SessionPasswordNeededError
+    SessionPasswordNeededError,
+    TelethonError
 )
-from telethon.errors.rpcerrorlist import RpcError
 from telethon.tl.functions.channels import InviteToChannelRequest, JoinChannelRequest
 
 # --- Configuration ---
@@ -126,15 +126,9 @@ async def add_members_task(phone, source, target, last_seen_filter):
                 log(phone, "UsersTooMuchError or UserChannelsTooMuchError - stopping session.")
                 break
 
-            except RpcError as e:
-                err_str = str(e).lower()
-                if "maximum number of users" in err_str:
-                    update_status(phone, "Error: Target group member limit reached.")
-                    log(phone, "InviteToChannelRequestError - group member limit reached")
-                    break
-                else:
-                    log(phone, f"RPC error: {e}")
-                    await asyncio.sleep(10)
+            except TelethonError as e:
+                log(phone, f"Telethon error: {str(e)}")
+                await asyncio.sleep(10)
             
             except Exception as e:
                 skipped_count += 1
