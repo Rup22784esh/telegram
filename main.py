@@ -156,18 +156,22 @@ async def add_session_route(request: Request, phone: str = Form(...), source: st
             "status": "Awaiting OTP", "added": 0, "skipped": 0
         }
         log(phone, "New session. Sent OTP code.")
-        return RedirectResponse(url=f"/otp_page?phone={phone}&source={source}&target={target}&phone_code_hash={phone_code_hash_str}", status_code=303)
+        return RedirectResponse(url=f"/otp_page?phone={phone}&source={source}&target={target}", status_code=303)
     except Exception as e:
         log(phone, f"Failed to send OTP: {e}")
         await client.disconnect()
         return HTMLResponse(f"Error initializing session: {e}", status_code=500)
 
 @app.get("/otp_page", response_class=HTMLResponse)
-async def get_otp_page(request: Request, phone: str, source: str, target: str, phone_code_hash: str):
-    return templates.TemplateResponse("otp.html", {"request": request, "phone": phone, "source": source, "target": target, "phone_code_hash": phone_code_hash})
+async def get_otp_page(request: Request, phone: str, source: str, target: str):
+    return templates.TemplateResponse("otp.html", {"request": request, "phone": phone, "source": source, "target": target})
 
 @app.post("/verify_otp")
-async def verify_otp_route(request: Request, phone: str = Form(...), code: str = Form(None), password: str = Form(None), phone_code_hash: str = Form(...), source: str = Form(...), target: str = Form(...)):
+async def verify_otp_route(request: Request, phone: str = Form(...), code: str = Form(None), password: str = Form(None), source: str = Form(...), target: str = Form(...)):
+    session_data = SESSIONS.get(phone)
+    if not session_data:
+        return HTMLResponse("Error: Session not found or expired.", status_code=400)
+
     client = TelegramClient(f"{SESSION_DIR}/{phone}", int(API_ID), API_HASH)
     await client.connect()
 
@@ -175,6 +179,9 @@ async def verify_otp_route(request: Request, phone: str = Form(...), code: str =
         if password:
             await client.sign_in(password=password)
         else:
+            phone_code_hash = session_data.get("phone_code_hash")
+            if not phone_code_hash:
+                return HTMLResponse("Error: phone_code_hash not found in session.", status_code=400)
             await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
 
         await client.disconnect()
@@ -186,7 +193,7 @@ async def verify_otp_route(request: Request, phone: str = Form(...), code: str =
         return RedirectResponse(url="/", status_code=303)
 
     except SessionPasswordNeededError:
-        return templates.TemplateResponse("password.html", {"request": request, "phone": phone, "source": source, "target": target, "phone_code_hash": phone_code_hash})
+        return templates.TemplateResponse("password.html", {"request": request, "phone": phone, "source": source, "target": target})
     except Exception as e:
         await client.disconnect()
         return HTMLResponse(f"Error: {e}", status_code=400)
@@ -230,7 +237,7 @@ async def reauthenticate_session_route(request: Request, phone: str = Form(...))
             "status": "Awaiting OTP"
         })
         log(phone, "Re-authentication: Sent OTP code.")
-        return templates.TemplateResponse("otp.html", {"request": request, "phone": phone, "source": session_data["source"], "target": session_data["target"], "phone_code_hash": phone_code_hash_str})
+        return templates.TemplateResponse("otp.html", {"request": request, "phone": phone, "source": session_data["source"], "target": session_data["target"]})
     except Exception as e:
         log(phone, f"Failed to send OTP for re-authentication: {e}")
         await client.disconnect()
