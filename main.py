@@ -174,7 +174,7 @@ async def verify_otp_route(request: Request, phone: str = Form(...), code: str =
         if password:
             await client.sign_in(password=password)
         else:
-            await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash)
+            await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
         
         await client.disconnect()
         SESSIONS[phone] = {
