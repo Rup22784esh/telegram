@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from telethon import TelegramClient
 from telethon.tl.types import UserStatusRecently, UserStatusLastWeek, UserStatusLastMonth
 from telethon.errors import SessionPasswordNeededError, FloodWaitError, UserPrivacyRestrictedError, UserNotMutualContactError, UserChannelsTooMuchError, UsersTooMuchError, UserAlreadyParticipantError
+from telethon.tl.functions.channels import JoinChannelRequest, InviteToChannelRequest
 
 # --- Configuration ---
 API_ID = os.environ.get("API_ID")
