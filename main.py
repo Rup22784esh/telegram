@@ -149,3 +149,27 @@ async def restart_session_route(request: Request, phone: str = Form(...)):
     log(phone, "Restarting session manually.")
     asyncio.create_task(add_members_task(phone, s["source"], s["target"]))
     return JSONResponse({"success": True})
+
+@app.post("/reauthenticate_session")
+async def reauthenticate_session_route(request: Request, phone: str = Form(...)):
+    session_data = SESSIONS.get(phone)
+    if not session_data:
+        return JSONResponse({"error": "Session not found"}, status_code=404)
+
+    # Re-initialize client for re-authentication
+    client = TelegramClient(f"{SESSION_DIR}/{phone}", int(API_ID), API_HASH)
+    await client.connect()
+
+    try:
+        phone_code_hash = await client.send_code_request(phone)
+        session_data.update({
+            "client": client, 
+            "phone_code_hash": phone_code_hash.phone_code_hash,
+            "status": "Awaiting OTP"
+        })
+        log(phone, "Re-authentication: Sent OTP code.")
+        return templates.TemplateResponse("otp.html", {"request": request, "phone": phone})
+    except Exception as e:
+        log(phone, f"Failed to send OTP for re-authentication: {e}")
+        await client.disconnect()
+        return HTMLResponse(f"Error during re-authentication: {e}", status_code=500)

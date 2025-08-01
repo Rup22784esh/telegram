@@ -48,6 +48,11 @@
                     <div class="actions">
                          <button class="copy-btn">Copy Log</button>
                          <button class="restart-btn">Restart</button>
+                         ${status.includes('not authorized') ? 
+                            `<form method="POST" action="/reauthenticate_session" style="display:inline;">
+                                <input type="hidden" name="phone" value="${phone}">
+                                <button type="submit" class="reauth-btn">Re-authenticate</button>
+                            </form>` : ''}
                     </div>
                 </div>
             `;
