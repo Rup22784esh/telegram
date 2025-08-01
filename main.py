@@ -148,7 +148,8 @@ async def add_session_route(request: Request, phone: str = Form(...), source: st
     await client.connect()
 
     try:
-        phone_code_hash_str = phone_code_hash.phone_code_hash
+        sent_code = await client.send_code_request(phone)
+        phone_code_hash_str = sent_code.phone_code_hash
         SESSIONS[phone] = {
             "phone": phone, "source": source, "target": target,
             "client": client, "phone_code_hash": phone_code_hash_str,
@@ -221,7 +222,8 @@ async def reauthenticate_session_route(request: Request, phone: str = Form(...))
     await client.connect()
 
     try:
-        phone_code_hash_str = phone_code_hash.phone_code_hash
+        sent_code = await client.send_code_request(phone)
+        phone_code_hash_str = sent_code.phone_code_hash
         session_data.update({
             "client": client, 
             "phone_code_hash": phone_code_hash_str,
