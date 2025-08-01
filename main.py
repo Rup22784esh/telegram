@@ -69,6 +69,62 @@ async def add_members_task(phone, source, target):
             log(phone, "Session is not authorized.")
             return
 
+        log(phone, "Joining source and target channels...")
+        await client(JoinChannelRequest(source))
+        await client(JoinChannelRequest(target))
+
+        log(phone, "Fetching source group members...")
+        all_members = await client.get_participants(source, limit=None)
+        target_members = await client.get_participants(target, limit=None)
+        target_ids = {u.id for u in target_members}
+
+        log(phone, f"Found {len(all_members)} total members. Filtering...")
+        valid_members = [m for m in all_members if m.id not in target_ids and not m.bot]
+        log(phone, f"Total valid members found: {len(valid_members)}")
+        
+        added_count = SESSIONS[phone].get('added', 0)
+        skipped_count = SESSIONS[phone].get('skipped', 0)
+
+        for idx, user in enumerate(valid_members):
+            username = getattr(user, 'username', user.id)
+            update_status(phone, f"Adding {idx+1}/{len(valid_members)}: {username}", added=added_count, skipped=skipped_count)
+            
+            try:
+                await asyncio.sleep(1)
+                await client(InviteToChannelRequest(channel=target, users=[user]))
+                added_count += 1
+                log(phone, f"Successfully added {username}")
+
+            except FloodWaitError as e:
+                wait_time = e.seconds + 10
+                update_status(phone, f"Flood wait for {wait_time}s", flood_wait_until=time.time()+wait_time)
+                log(phone, f"FloodWait for {wait_time} seconds")
+                await asyncio.sleep(wait_time)
+            except (UserPrivacyRestrictedError, UserAlreadyParticipantError):
+                skipped_count += 1
+                log(phone, f"Skipped user {username}")
+                await asyncio.sleep(1)
+            except (UsersTooMuchError, UserChannelsTooMuchError):
+                update_status(phone, "Error: Account limit reached.")
+                log(phone, "Account channels/groups limit reached.")
+                break
+            except RPCError as e:
+                log(phone, f"RPCError: {e}")
+                await asyncio.sleep(10)
+            except Exception as e:
+                log(phone, f"Unexpected error: {e}")
+                await asyncio.sleep(15)
+
+        update_status(phone, "Finished", added=added_count, skipped=skipped_count)
+        log(phone, f"Session finished. Added: {added_count}, Skipped: {skipped_count}")
+
+    except Exception as e:
+        update_status(phone, f"Fatal error: {e}")
+        log(phone, f"Fatal error: {e}")
+    finally:
+        if client.is_connected():
+            await client.disconnect()
+
 @app.get("/", response_class=HTMLResponse)
 async def homepage(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
