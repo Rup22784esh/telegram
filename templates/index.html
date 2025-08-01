@@ -1,76 +1,146 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
+    <meta charset="UTF-8" />
     <title>Telegram Member Adder</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-    <h1>Telegram Member Adder Dashboard</h1>
     <div class="container">
-        <div class="form-container">
-            <h2>Add New Account</h2>
-            <form action="/add_session" method="post">
-                <input type="text" name="phone" placeholder="Phone (+1234567890)" required>
-                <input type="text" name="source" placeholder="Source Group Link" required>
-                <input type="text" name="target" placeholder="Target Group Link" required>
-                <input type="number" name="last_seen_filter" placeholder="Last Seen Days (e.g., 7)" value="7">
-                <button type="submit">Add Account</button>
-            </form>
-        </div>
-        <div class="sessions-container">
-            <h2>Active Sessions</h2>
-            <table>
-                <thead>
-                    <tr><th>Phone</th><th>Source</th><th>Target</th><th>Status</th><th>Added</th><th>Skipped</th><th>Actions</th></tr>
-                </thead>
-                <tbody>
-                    {% for phone, data in sessions.items() %}
-                    <tr>
-                        <td>{{ data.phone }}</td>
-                        <td>{{ data.source }}</td>
-                        <td>{{ data.target }}</td>
-                        <td id="status-{{ phone }}">
-                            {% if data.flood_wait_until and time.time() < data.flood_wait_until %}
-                                <span class="flood-wait countdown" data-end="{{ data.flood_wait_until }}"></span>
-                            {% else %}
-                                {{ data.status }}
-                            {% endif %}
-                        </td>
-                        <td>{{ data.added or 0 }}</td>
-                        <td>{{ data.skipped or 0 }}</td>
-                        <td>
-                            <form method="POST" action="/restart_session" style="display:inline;">
-                                <input type="hidden" name="phone" value="{{ data.phone }}">
-                                <button type="submit">Restart</button>
-                            </form>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+        <h1>Telegram Member Adder</h1>
+        <form id="addSessionForm">
+            <input type="text" name="phone" placeholder="Phone (+1234567890)" required />
+            <input type="text" name="source" placeholder="Source Group Link (e.g., https://t.me/groupname)" required />
+            <input type="text" name="target" placeholder="Target Group Link (e.g., https://t.me/groupname)" required />
+            <button type="submit">➕ Add Account</button>
+        </form>
+
+        <h2>Active Sessions</h2>
+        <div id="sessions-container"></div>
     </div>
+
     <script>
-    function updateTimers() {
-        document.querySelectorAll(".countdown").forEach(el => {
-            const end = parseFloat(el.dataset.end);
-            const left = Math.max(0, Math.floor(end - (Date.now() / 1000)));
-            if (left > 0) {
-                const minutes = Math.floor(left / 60);
-                const seconds = left % 60;
-                el.innerText = `Flood wait: ${minutes}m ${seconds}s`;
-            } else {
-                el.innerText = "Ready to resume...";
-                if (!el.classList.contains('reloading')) {
-                    el.classList.add('reloading');
-                    setTimeout(() => window.location.reload(), 2000);
+        const sessionsContainer = document.getElementById('sessions-container');
+
+        function renderSession(phone, data) {
+            const status = data.status || 'N/A';
+            let statusClass = 'ready';
+            if (status.toLowerCase().includes('error')) statusClass = 'error';
+            if (status.toLowerCase().includes('wait')) statusClass = 'waiting';
+
+            let timerHtml = '';
+            if (data.flood_wait_until && (data.flood_wait_until * 1000 > Date.now())) {
+                timerHtml = `<div class="flood-wait countdown" data-end="${data.flood_wait_until}"></div>`;
+            }
+
+            return `
+                <div class="session" id="session-${phone}">
+                    <h3>${phone}</h3>
+                    <p><b>From:</b> ${data.source}</p>
+                    <p><b>To:</b> ${data.target}</p>
+                    <div class="status ${statusClass}">${status}</div>
+                    ${timerHtml}
+                    <div class="stats">
+                        <span>✅ Added: ${data.added || 0}</span>
+                        <span>❌ Skipped: ${data.skipped || 0}</span>
+                    </div>
+                    <pre class="logs"></pre>
+                    <div class="actions">
+                         <button class="copy-btn">Copy Log</button>
+                         <button class="restart-btn">Restart</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        async function fetchAndUpdate() {
+            try {
+                const response = await fetch('/api/sessions');
+                const { sessions } = await response.json();
+
+                // Update existing or add new sessions
+                for (const phone in sessions) {
+                    const sessionData = sessions[phone];
+                    let sessionEl = document.getElementById(`session-${phone}`);
+                    if (!sessionEl) {
+                        sessionsContainer.insertAdjacentHTML('beforeend', renderSession(phone, sessionData));
+                        sessionEl = document.getElementById(`session-${phone}`);
+                    }
+
+                    // Update fields
+                    sessionEl.querySelector('.status').textContent = sessionData.status;
+                    sessionEl.querySelector('.stats span:first-child').textContent = `✅ Added: ${sessionData.added || 0}`;
+                    sessionEl.querySelector('.stats span:last-child').textContent = `❌ Skipped: ${sessionData.skipped || 0}`;
+                    
+                    // Fetch and update logs
+                    const logResponse = await fetch(`/api/logs/${phone}`);
+                    const { logs } = await logResponse.json();
+                    const logEl = sessionEl.querySelector('.logs');
+                    logEl.textContent = logs.join('\n');
+                    logEl.scrollTop = logEl.scrollHeight;
                 }
+
+                updateTimers();
+
+            } catch (error) {
+                console.error("Failed to fetch session data:", error);
+            }
+        }
+
+        function updateTimers() {
+            document.querySelectorAll(".countdown").forEach(el => {
+                const end = parseFloat(el.dataset.end);
+                const left = Math.max(0, Math.floor(end - (Date.now() / 1000)));
+                if (left > 0) {
+                    const minutes = Math.floor(left / 60);
+                    const seconds = left % 60;
+                    el.innerText = `⏳ Waiting: ${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                } else {
+                    el.style.display = 'none';
+                }
+            });
+        }
+
+        // Event delegation for buttons
+        sessionsContainer.addEventListener('click', async (e) => {
+            const sessionEl = e.target.closest('.session');
+            if (!sessionEl) return;
+            const phone = sessionEl.id.replace('session-', '');
+
+            if (e.target.classList.contains('copy-btn')) {
+                const logText = sessionEl.querySelector('.logs').textContent;
+                navigator.clipboard.writeText(logText).then(() => {
+                    e.target.textContent = '✅ Copied!';
+                    setTimeout(() => e.target.textContent = 'Copy Log', 2000);
+                });
+            }
+
+            if (e.target.classList.contains('restart-btn')) {
+                if (!confirm(`Are you sure you want to restart the session for ${phone}?`)) return;
+                const formData = new FormData();
+                formData.append('phone', phone);
+                await fetch('/restart_session', { method: 'POST', body: formData });
             }
         });
-    }
-    setInterval(updateTimers, 1000);
-    document.addEventListener("DOMContentLoaded", updateTimers);
+
+        document.getElementById('addSessionForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const response = await fetch('/add_session', { method: 'POST', body: formData });
+            if (response.ok) {
+                e.target.reset();
+                fetchAndUpdate();
+            } else {
+                alert('Failed to add session. See console for details.');
+            }
+        });
+
+        // Initial load and periodic updates
+        fetchAndUpdate();
+        setInterval(fetchAndUpdate, 5000); // Refresh every 5 seconds
+        setInterval(updateTimers, 1000);
+
     </script>
 </body>
+</html>
 </html>
