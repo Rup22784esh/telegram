@@ -148,14 +148,14 @@ async def add_session_route(request: Request, phone: str = Form(...), source: st
     await client.connect()
 
     try:
-        phone_code_hash = await client.send_code_request(phone)
+        phone_code_hash_str = phone_code_hash.phone_code_hash
         SESSIONS[phone] = {
             "phone": phone, "source": source, "target": target,
-            "client": client, "phone_code_hash": phone_code_hash.phone_code_hash,
+            "client": client, "phone_code_hash": phone_code_hash_str,
             "status": "Awaiting OTP", "added": 0, "skipped": 0
         }
         log(phone, "New session. Sent OTP code.")
-        return RedirectResponse(url=f"/otp_page?phone={phone}&source={source}&target={target}&phone_code_hash={phone_code_hash}", status_code=303)
+        return RedirectResponse(url=f"/otp_page?phone={phone}&source={source}&target={target}&phone_code_hash={phone_code_hash_str}", status_code=303)
     except Exception as e:
         log(phone, f"Failed to send OTP: {e}")
         await client.disconnect()
@@ -221,14 +221,14 @@ async def reauthenticate_session_route(request: Request, phone: str = Form(...))
     await client.connect()
 
     try:
-        phone_code_hash = await client.send_code_request(phone)
+        phone_code_hash_str = phone_code_hash.phone_code_hash
         session_data.update({
             "client": client, 
-            "phone_code_hash": phone_code_hash.phone_code_hash,
+            "phone_code_hash": phone_code_hash_str,
             "status": "Awaiting OTP"
         })
         log(phone, "Re-authentication: Sent OTP code.")
-        return templates.TemplateResponse("otp.html", {"request": request, "phone": phone})
+        return templates.TemplateResponse("otp.html", {"request": request, "phone": phone, "source": session_data["source"], "target": session_data["target"], "phone_code_hash": phone_code_hash_str})
     except Exception as e:
         log(phone, f"Failed to send OTP for re-authentication: {e}")
         await client.disconnect()
