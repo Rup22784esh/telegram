@@ -14,6 +14,7 @@
                 <input type="text" name="phone" placeholder="Phone (+1234567890)" required>
                 <input type="text" name="source" placeholder="Source Group Link" required>
                 <input type="text" name="target" placeholder="Target Group Link" required>
+                <input type="number" name="last_seen_filter" placeholder="Last Seen Days (e.g., 7)" value="7">
                 <button type="submit">Add Account</button>
             </form>
         </div>
@@ -31,7 +32,7 @@
                         <td>{{ data.target }}</td>
                         <td id="status-{{ phone }}">
                             {% if data.flood_wait_until and time.time() < data.flood_wait_until %}
-                                <span class="flood-wait" data-until="{{ data.flood_wait_until }}"></span>
+                                <span class="flood-wait countdown" data-end="{{ data.flood_wait_until }}"></span>
                             {% else %}
                                 {{ data.status }}
                             {% endif %}
@@ -43,27 +44,25 @@
         </div>
     </div>
     <script>
-        function updateTimers() {
-            document.querySelectorAll('.flood-wait').forEach(span => {
-                const waitUntil = parseFloat(span.dataset.until);
-                const now = Date.now() / 1000;
-                const remaining = Math.round(waitUntil - now);
-                if (remaining > 0) {
-                    const minutes = Math.floor(remaining / 60);
-                    const seconds = remaining % 60;
-                    span.textContent = `Flood Wait: ${minutes}m ${seconds}s`;
-                } else {
-                    span.textContent = "Ready to resume...";
-                    // Optionally, trigger a page reload to let the cron job logic take over
-                    if (!span.classList.contains('reloading')) {
-                        span.classList.add('reloading');
-                        setTimeout(() => window.location.reload(), 2000);
-                    }
+    function updateTimers() {
+        document.querySelectorAll(".countdown").forEach(el => {
+            const end = parseFloat(el.dataset.end);
+            const left = Math.max(0, Math.floor(end - (Date.now() / 1000)));
+            if (left > 0) {
+                const minutes = Math.floor(left / 60);
+                const seconds = left % 60;
+                el.innerText = `Flood wait: ${minutes}m ${seconds}s`;
+            } else {
+                el.innerText = "Ready to resume...";
+                if (!el.classList.contains('reloading')) {
+                    el.classList.add('reloading');
+                    setTimeout(() => window.location.reload(), 2000);
                 }
-            });
-        }
-        setInterval(updateTimers, 1000);
-        updateTimers(); // Initial call
+            }
+        });
+    }
+    setInterval(updateTimers, 1000);
+    document.addEventListener("DOMContentLoaded", updateTimers);
     </script>
 </body>
 </html>
