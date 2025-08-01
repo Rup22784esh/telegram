@@ -6,10 +6,11 @@
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <div class="container form-container">
-        <h2>OTP Verification for {{ phone }}</h2>
-        <form action="/verify_otp" method="post">
-            <input type="hidden" name="phone" value="{{ phone }}">
+    <div class="container">
+        <form class="form-container" action="/verify_otp" method="post">
+            <h2>OTP Verification for ${phone}</h2>
+            <p>An OTP code has been sent to your Telegram account.</p>
+            <input type="hidden" name="phone" value="${phone}">
             <input type="text" name="code" placeholder="Enter OTP Code" required>
             <button type="submit">Verify OTP</button>
         </form>

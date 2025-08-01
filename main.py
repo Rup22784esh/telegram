@@ -1,10 +1,11 @@
+
 import os
 import json
 import time
 import asyncio
 import logging
 from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from telethon import TelegramClient
@@ -24,7 +25,6 @@ API_ID = os.environ.get("API_ID")
 API_HASH = os.environ.get("API_HASH")
 SESSION_DIR = "sessions"
 LOGS_DIR = "logs"
-STATE_FILE = "sessions_state.json"
 
 if not API_ID or not API_HASH:
     raise ValueError("API_ID and API_HASH must be set in environment variables.")
@@ -58,24 +58,17 @@ def update_status(phone, message, flood_wait_until=None, added=None, skipped=Non
         if skipped is not None:
             data['skipped'] = skipped
 
-async def add_members_task(phone, source, target, last_seen_filter):
+async def add_members_task(phone, source, target):
     log(phone, f"Starting session: {source} -> {target}")
     client = TelegramClient(f"{SESSION_DIR}/{phone}", int(API_ID), API_HASH)
     
     try:
-        await client.start(phone=phone)
-    except SessionPasswordNeededError:
-        update_status(phone, "Error: 2FA Password Needed. Please re-add session.")
-        log(phone, "SessionPasswordNeededError - manual intervention needed")
-        return
-    except Exception as e:
-        update_status(phone, f"Error: {e}")
-        log(phone, f"Fatal connection error: {e}")
-        return
+        await client.connect()
+        if not await client.is_user_authorized():
+            update_status(phone, "Error: Session is not authorized. Please re-add.")
+            log(phone, "Session is not authorized.")
+            return
 
-    SESSIONS[phone].update({"client": client})
-    
-    try:
         log(phone, "Joining source and target channels...")
         await client(JoinChannelRequest(source))
         await client(JoinChannelRequest(target))
@@ -86,13 +79,9 @@ async def add_members_task(phone, source, target, last_seen_filter):
         target_ids = {u.id for u in target_members}
 
         log(phone, f"Found {len(all_members)} total members. Filtering...")
-        
-        valid_members = [
-            m for m in all_members 
-            if m.id not in target_ids and not m.bot
-        ]
-        
+        valid_members = [m for m in all_members if m.id not in target_ids and not m.bot]
         log(phone, f"Total valid members found: {len(valid_members)}")
+        
         added_count = SESSIONS[phone].get('added', 0)
         skipped_count = SESSIONS[phone].get('skipped', 0)
 
@@ -101,7 +90,7 @@ async def add_members_task(phone, source, target, last_seen_filter):
             update_status(phone, f"Adding {idx+1}/{len(valid_members)}: {username}", added=added_count, skipped=skipped_count)
             
             try:
-                await asyncio.sleep(1) # Gentle delay
+                await asyncio.sleep(1)
                 await client(InviteToChannelRequest(channel=target, users=[user]))
                 added_count += 1
                 log(phone, f"Successfully added {username}")
@@ -111,79 +100,85 @@ async def add_members_task(phone, source, target, last_seen_filter):
                 update_status(phone, f"Flood wait for {wait_time}s", flood_wait_until=time.time()+wait_time)
                 log(phone, f"FloodWait for {wait_time} seconds")
                 await asyncio.sleep(wait_time)
-            except UserPrivacyRestrictedError:
+            except (UserPrivacyRestrictedError, UserAlreadyParticipantError):
                 skipped_count += 1
-                update_status(phone, "Skipped (privacy)", skipped=skipped_count)
-                log(phone, "Privacy skip")
-                await asyncio.sleep(2)
-            except UserAlreadyParticipantError:
-                skipped_count += 1
-                update_status(phone, "Skipped (already participant)", skipped=skipped_count)
-                log(phone, "Already participant skip")
+                log(phone, f"Skipped user {username}")
                 await asyncio.sleep(1)
             except (UsersTooMuchError, UserChannelsTooMuchError):
-                update_status(phone, "Account channels/groups limit reached. Stopping.")
-                log(phone, "Limit reached stop")
-                break
-            except SessionPasswordNeededError:
-                update_status(phone, "2FA password needed. Manual login.", skipped=skipped_count)
-                log(phone, "Need 2FA password")
+                update_status(phone, "Error: Account limit reached.")
+                log(phone, "Account channels/groups limit reached.")
                 break
             except RPCError as e:
-                msg = str(e).lower()
-                if "flood_wait" in msg:
-                    # handle as flood wait
-                    wait = int(e.code or 60)
-                    update_status(phone, f"Flood wait via RPC {wait}s", flood_wait_until=time.time()+wait)
-                    log(phone, f"RPC FloodWait {wait}s")
-                    await asyncio.sleep(wait + 5)
-                elif "too much" in msg or "limit" in msg:
-                    update_status(phone, "Target group limit reached via RPC")
-                    log(phone, f"RPC limit error: {msg}")
-                    break
-                else:
-                    log(phone, f"RPCError unknown: {msg}")
-                    await asyncio.sleep(10)
+                log(phone, f"RPCError: {e}")
+                await asyncio.sleep(10)
             except Exception as e:
-                update_status(phone, f"Unexpected error: {e}")
-                log(phone, f"Unexpected: {e}")
+                log(phone, f"Unexpected error: {e}")
                 await asyncio.sleep(15)
 
         update_status(phone, "Finished", added=added_count, skipped=skipped_count)
         log(phone, f"Session finished. Added: {added_count}, Skipped: {skipped_count}")
 
     except Exception as e:
-        error_message = f"Fatal error: {e}"
-        update_status(phone, error_message)
-        log(phone, error_message)
+        update_status(phone, f"Fatal error: {e}")
+        log(phone, f"Fatal error: {e}")
     finally:
         if client.is_connected():
             await client.disconnect()
-        SESSIONS[phone].pop("client", None)
 
 @app.get("/", response_class=HTMLResponse)
 async def homepage(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 @app.post("/add_session")
-async def add_session_route(request: Request, phone: str = Form(...), source: str = Form(...), target: str = Form(...), last_seen_filter: int = Form(7)):
+async def add_session_route(request: Request, phone: str = Form(...), source: str = Form(...), target: str = Form(...)):
     phone = phone.strip()
-    if phone in SESSIONS and "client" in SESSIONS[phone]:
-        return JSONResponse({"error": "Session already running"}, status_code=400)
+    client = TelegramClient(f"{SESSION_DIR}/{phone}", int(API_ID), API_HASH)
+    await client.connect()
+
+    if await client.is_user_authorized():
+        SESSIONS[phone] = {
+            "phone": phone, "source": source, "target": target,
+            "status": "Ready", "added": 0, "skipped": 0
+        }
+        asyncio.create_task(add_members_task(phone, source, target))
+        return RedirectResponse(url="/", status_code=303)
+    else:
+        phone_code_hash = await client.send_code_request(phone)
+        SESSIONS[phone] = {
+            "phone": phone, "source": source, "target": target,
+            "client": client, "phone_code_hash": phone_code_hash.phone_code_hash
+        }
+        return templates.TemplateResponse("otp.html", {"request": request, "phone": phone})
+
+@app.post("/verify_otp")
+async def verify_otp_route(request: Request, phone: str = Form(...), code: str = Form(...), password: str = Form(None)):
+    session_data = SESSIONS.get(phone)
+    if not session_data or "client" not in session_data:
+        return HTMLResponse("Session not found or already active.", status_code=400)
     
-    SESSION_LOGS[phone] = []
-    SESSIONS[phone] = {
-        "phone": phone, "source": source, "target": target,
-        "last_seen_filter": last_seen_filter, "status": "Initializing...",
-        "added": 0, "skipped": 0, "flood_wait_until": None
-    }
-    
-    asyncio.create_task(add_members_task(phone, source, target, last_seen_filter))
-    return JSONResponse({"success": True})
+    client = session_data["client"]
+    try:
+        if password:
+            await client.sign_in(password=password)
+        else:
+            await client.sign_in(phone=phone, code=code, phone_code_hash=session_data["phone_code_hash"])
+        
+        await client.disconnect()
+        session_data.pop("client", None)
+        session_data.pop("phone_code_hash", None)
+        session_data["status"] = "Ready"
+        asyncio.create_task(add_members_task(phone, session_data["source"], session_data["target"]))
+        return RedirectResponse(url="/", status_code=303)
+
+    except SessionPasswordNeededError:
+        return templates.TemplateResponse("password.html", {"request": request, "phone": phone})
+    except Exception as e:
+        return HTMLResponse(f"Error: {e}", status_code=400)
 
 @app.get("/api/sessions")
 async def api_sessions():
-    return JSONResponse({"sessions": SESSIONS})
+    # Exclude client object from the response
+    return JSONResponse({"sessions": {p: {k: v for k, v in d.items() if k != 'client'} for p, d in SESSIONS.items()}})
 
 @app.get("/api/logs/{phone}")
 async def get_logs(phone: str):
@@ -196,9 +191,6 @@ async def restart_session_route(request: Request, phone: str = Form(...)):
         return JSONResponse({"error": "Session not found"}, status_code=404)
     
     s = SESSIONS[phone]
-    if "client" in s and s["client"].is_connected():
-        await s["client"].disconnect()
-
     log(phone, "Restarting session manually.")
-    asyncio.create_task(add_members_task(phone, s["source"], s["target"], s["last_seen_filter"]))
+    asyncio.create_task(add_members_task(phone, s["source"], s["target"]))
     return JSONResponse({"success": True})
