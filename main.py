@@ -149,10 +149,9 @@ async def add_session_route(request: Request, phone: str = Form(...), source: st
 
     try:
         sent_code = await client.send_code_request(phone)
-        phone_code_hash_str = sent_code.phone_code_hash
         SESSIONS[phone] = {
             "phone": phone, "source": source, "target": target,
-            "client": client, "phone_code_hash": phone_code_hash_str,
+            "client": client, "phone_code_hash": sent_code.phone_code_hash,
             "status": "Awaiting OTP", "added": 0, "skipped": 0
         }
         log(phone, "New session. Sent OTP code.")
@@ -169,11 +168,10 @@ async def get_otp_page(request: Request, phone: str, source: str, target: str):
 @app.post("/verify_otp")
 async def verify_otp_route(request: Request, phone: str = Form(...), code: str = Form(None), password: str = Form(None), source: str = Form(...), target: str = Form(...)):
     session_data = SESSIONS.get(phone)
-    if not session_data:
-        return HTMLResponse("Error: Session not found or expired.", status_code=400)
+    if not session_data or 'client' not in session_data:
+        return HTMLResponse("Error: Session not found or client not initialized.", status_code=400)
 
-    client = TelegramClient(f"{SESSION_DIR}/{phone}", int(API_ID), API_HASH)
-    await client.connect()
+    client = session_data['client']
 
     try:
         if password:
@@ -184,18 +182,16 @@ async def verify_otp_route(request: Request, phone: str = Form(...), code: str =
                 return HTMLResponse("Error: phone_code_hash not found in session.", status_code=400)
             await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
 
-        await client.disconnect()
-        SESSIONS[phone] = {
-            "phone": phone, "source": source, "target": target,
-            "status": "Ready", "added": 0, "skipped": 0
-        }
+        # Do not disconnect here, the background task will handle it.
+        session_data["status"] = "Ready"
         asyncio.create_task(add_members_task(phone, source, target))
         return RedirectResponse(url="/", status_code=303)
 
     except SessionPasswordNeededError:
         return templates.TemplateResponse("password.html", {"request": request, "phone": phone, "source": source, "target": target})
     except Exception as e:
-        await client.disconnect()
+        await client.disconnect() # Disconnect on error
+        session_data['status'] = f"Error: {e}"
         return HTMLResponse(f"Error: {e}", status_code=400)
 
 @app.get("/api/sessions")
