@@ -8,10 +8,12 @@
 <body>
     <div class="container">
         <form class="form-container" action="/verify_otp" method="post">
-            <h2>OTP Verification for ${phone}</h2>
+            <h2>OTP Verification for {{ phone }}</h2>
             <p>An OTP code has been sent to your Telegram account.</p>
             <input type="hidden" name="phone" value="{{ phone }}">
-            <input type="hidden" name="phone_code_hash" value="{{ session_data.phone_code_hash }}">
+            <input type="hidden" name="source" value="{{ source }}">
+            <input type="hidden" name="target" value="{{ target }}">
+            <input type="hidden" name="phone_code_hash" value="{{ phone_code_hash }}">
             <input type="text" name="code" placeholder="Enter OTP Code" required>
             <button type="submit">Verify OTP</button>
         </form>

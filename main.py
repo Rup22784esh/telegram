@@ -155,25 +155,18 @@ async def add_session_route(request: Request, phone: str = Form(...), source: st
             "status": "Awaiting OTP", "added": 0, "skipped": 0
         }
         log(phone, "New session. Sent OTP code.")
-        return RedirectResponse(url=f"/otp_page?phone={phone}", status_code=303)
+        return RedirectResponse(url=f"/otp_page?phone={phone}&source={source}&target={target}&phone_code_hash={phone_code_hash}", status_code=303)
     except Exception as e:
         log(phone, f"Failed to send OTP: {e}")
         await client.disconnect()
         return HTMLResponse(f"Error initializing session: {e}", status_code=500)
 
 @app.get("/otp_page", response_class=HTMLResponse)
-async def get_otp_page(request: Request, phone: str):
-    session_data = SESSIONS.get(phone)
-    if not session_data:
-        return HTMLResponse("Session data not found.", status_code=404)
-    return templates.TemplateResponse("otp.html", {"request": request, "phone": phone, "session_data": session_data})
+async def get_otp_page(request: Request, phone: str, source: str, target: str, phone_code_hash: str):
+    return templates.TemplateResponse("otp.html", {"request": request, "phone": phone, "source": source, "target": target, "phone_code_hash": phone_code_hash})
 
 @app.post("/verify_otp")
-async def verify_otp_route(request: Request, phone: str = Form(...), code: str = Form(...), password: str = Form(None), phone_code_hash: str = Form(...)):
-    session_data = SESSIONS.get(phone)
-    if not session_data:
-        return HTMLResponse("Session not found.", status_code=400)
-    
+async def verify_otp_route(request: Request, phone: str = Form(...), code: str = Form(...), password: str = Form(None), phone_code_hash: str = Form(...), source: str = Form(...), target: str = Form(...)):
     client = TelegramClient(f"{SESSION_DIR}/{phone}", int(API_ID), API_HASH)
     await client.connect()
 
@@ -184,12 +177,15 @@ async def verify_otp_route(request: Request, phone: str = Form(...), code: str =
             await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash)
         
         await client.disconnect()
-        session_data["status"] = "Ready"
-        asyncio.create_task(add_members_task(phone, session_data["source"], session_data["target"]))
+        SESSIONS[phone] = {
+            "phone": phone, "source": source, "target": target,
+            "status": "Ready", "added": 0, "skipped": 0
+        }
+        asyncio.create_task(add_members_task(phone, source, target))
         return RedirectResponse(url="/", status_code=303)
 
     except SessionPasswordNeededError:
-        return templates.TemplateResponse("password.html", {"request": request, "phone": phone})
+        return templates.TemplateResponse("password.html", {"request": request, "phone": phone, "source": source, "target": target, "phone_code_hash": phone_code_hash})
     except Exception as e:
         await client.disconnect()
         return HTMLResponse(f"Error: {e}", status_code=400)
