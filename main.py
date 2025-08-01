@@ -163,7 +163,10 @@ async def add_session_route(request: Request, phone: str = Form(...), source: st
 
 @app.get("/otp_page", response_class=HTMLResponse)
 async def get_otp_page(request: Request, phone: str):
-    return templates.TemplateResponse("otp.html", {"request": request, "phone": phone})
+    session_data = SESSIONS.get(phone)
+    if not session_data:
+        return HTMLResponse("Session data not found.", status_code=404)
+    return templates.TemplateResponse("otp.html", {"request": request, "phone": phone, "session_data": session_data})
 
 @app.post("/verify_otp")
 async def verify_otp_route(request: Request, phone: str = Form(...), code: str = Form(...), password: str = Form(None), phone_code_hash: str = Form(...)):
