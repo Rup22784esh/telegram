@@ -169,16 +169,14 @@ async def get_otp_page(request: Request, phone: str, source: str, target: str, p
 @app.post("/verify_otp")
 async def verify_otp_route(request: Request, phone: str = Form(...), code: str = Form(None), password: str = Form(None), phone_code_hash: str = Form(...), source: str = Form(...), target: str = Form(...)):
     client = TelegramClient(f"{SESSION_DIR}/{phone}", int(API_ID), API_HASH)
-
-    async def code_callback():
-        return code
-
-    async def password_callback():
-        return password
+    await client.connect()
 
     try:
-        await client.start(phone=phone, code_callback=code_callback, password_callback=password_callback)
-        
+        if password:
+            await client.sign_in(password=password)
+        else:
+            await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
+
         await client.disconnect()
         SESSIONS[phone] = {
             "phone": phone, "source": source, "target": target,
