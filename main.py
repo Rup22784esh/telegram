@@ -166,21 +166,21 @@ async def get_otp_page(request: Request, phone: str):
     return templates.TemplateResponse("otp.html", {"request": request, "phone": phone})
 
 @app.post("/verify_otp")
-async def verify_otp_route(request: Request, phone: str = Form(...), code: str = Form(...), password: str = Form(None)):
+async def verify_otp_route(request: Request, phone: str = Form(...), code: str = Form(...), password: str = Form(None), phone_code_hash: str = Form(...)):
     session_data = SESSIONS.get(phone)
-    if not session_data or "client" not in session_data:
-        return HTMLResponse("Session not found or already active.", status_code=400)
+    if not session_data:
+        return HTMLResponse("Session not found.", status_code=400)
     
-    client = session_data["client"]
+    client = TelegramClient(f"{SESSION_DIR}/{phone}", int(API_ID), API_HASH)
+    await client.connect()
+
     try:
         if password:
             await client.sign_in(password=password)
         else:
-            await client.sign_in(phone=phone, code=code, phone_code_hash=session_data["phone_code_hash"])
+            await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash)
         
         await client.disconnect()
-        session_data.pop("client", None)
-        session_data.pop("phone_code_hash", None)
         session_data["status"] = "Ready"
         asyncio.create_task(add_members_task(phone, session_data["source"], session_data["target"]))
         return RedirectResponse(url="/", status_code=303)
@@ -188,6 +188,7 @@ async def verify_otp_route(request: Request, phone: str = Form(...), code: str =
     except SessionPasswordNeededError:
         return templates.TemplateResponse("password.html", {"request": request, "phone": phone})
     except Exception as e:
+        await client.disconnect()
         return HTMLResponse(f"Error: {e}", status_code=400)
 
 @app.get("/api/sessions")
