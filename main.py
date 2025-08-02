@@ -96,7 +96,7 @@ async def add_members_task(client, phone, source, target):
 
             except FloodWaitError as e:
                 wait_time = e.seconds + 10
-                update_status(phone, f"Flood wait for {wait_time}s", flood_wait_until=time.time()+wait_time)
+                update_status(phone, f"Flood wait for {wait_time}s", flood_wait_until=time.time()+wait_time, added=added_count, skipped=skipped_count)
                 log(phone, f"FloodWait for {wait_time} seconds")
                 await asyncio.sleep(wait_time)
             except (UserPrivacyRestrictedError, UserAlreadyParticipantError):
@@ -104,7 +104,7 @@ async def add_members_task(client, phone, source, target):
                 log(phone, f"Skipped user {username}")
                 await asyncio.sleep(1)
             except (UsersTooMuchError, UserChannelsTooMuchError):
-                update_status(phone, "Error: Account limit reached.")
+                update_status(phone, "Error: Account channels/groups limit reached.", added=added_count, skipped=skipped_count)
                 log(phone, "Account channels/groups limit reached.")
                 break
             except RPCError as e:
